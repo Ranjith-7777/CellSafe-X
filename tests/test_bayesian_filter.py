@@ -8,6 +8,7 @@ import pytest
 from config import model_parameters as P
 from models.bayesian_filter import (
     BayesianFilter,
+    calibrated_posterior,
     log_normalise,
     log_sum_exp,
     observation_log_likelihood,
@@ -252,6 +253,49 @@ def test_risk_trajectory_is_bounded_and_correctly_shaped():
     assert len(traj["dangerous_probability"]) == 31
     assert ((traj["dangerous_probability"] >= 0) & (traj["dangerous_probability"] <= 1)).all()
     assert traj["dangerous_probability"][0] == pytest.approx(0.3)
+
+
+# ---------------------------------------------------------------------------
+# posterior calibration (temperature scaling)
+# ---------------------------------------------------------------------------
+def test_calibrated_posterior_identity_at_temperature_one():
+    p = np.array([0.7, 0.2, 0.08, 0.02])
+    assert np.allclose(calibrated_posterior(p, 1.0), p)
+
+
+def test_calibrated_posterior_sums_to_one():
+    for t in (0.3, 0.5, 1.0, 2.0, 5.0):
+        p = np.array([0.9997, 0.0002, 0.0001, 0.0])
+        cal = calibrated_posterior(p, t)
+        assert cal.sum() == pytest.approx(1.0)
+        assert (cal >= 0).all()
+
+
+def test_calibrated_posterior_preserves_argmax():
+    """Temperature scaling must never change the MAP state - only accuracy-
+    independent metrics (Brier, NLL, ECE) may move."""
+    p = np.array([0.05, 0.15, 0.55, 0.25])
+    for t in (0.2, 0.5, 1.0, 2.0, 4.0, 10.0):
+        assert np.argmax(calibrated_posterior(p, t)) == np.argmax(p)
+
+
+def test_calibrated_posterior_above_one_flattens_confidence():
+    """temperature > 1 must reduce the max-probability entry (soften an
+    over-confident posterior)."""
+    p = np.array([0.999, 0.0007, 0.0002, 0.0001])
+    cal = calibrated_posterior(p, 3.0)
+    assert cal.max() < p.max()
+
+
+def test_calibrated_posterior_below_one_sharpens_confidence():
+    p = np.array([0.6, 0.25, 0.1, 0.05])
+    cal = calibrated_posterior(p, 0.4)
+    assert cal.max() > p.max()
+
+
+def test_calibrated_posterior_rejects_nonpositive_temperature():
+    with pytest.raises(ValueError):
+        calibrated_posterior(np.array([0.25, 0.25, 0.25, 0.25]), 0.0)
 
 
 def test_pack_risk_aggregation():

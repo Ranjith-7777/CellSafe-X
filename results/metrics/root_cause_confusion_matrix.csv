@@ -1,0 +1,7 @@
+,Normal/Fast-Charging Heat,Temperature Sensor Fault,Cooling-System Failure,Overcharging,Internal Short Circuit,External Heat Exposure
+Normal/Fast-Charging Heat,1753,2,0,0,7,38
+Temperature Sensor Fault,183,716,0,0,0,1
+Cooling-System Failure,213,1,609,0,0,77
+Overcharging,0,0,0,0,0,0
+Internal Short Circuit,185,1,0,0,713,1
+External Heat Exposure,1,0,0,0,0,899

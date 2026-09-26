@@ -1,0 +1,296 @@
+{
+  "generated_at_utc": "2026-09-17T23:52:00+00:00",
+  "data_source": "SIMULATED - synthetic sequences from data/battery_simulator.py",
+  "python_version": "3.14.5",
+  "config": {
+    "base_seed": 20240,
+    "n_scenarios": 6,
+    "n_cells": 6,
+    "dt_seconds": 10.0,
+    "bayes_alarm_threshold": 0.5,
+    "threshold_warn_c": 55.0,
+    "threshold_critical_c": 70.0
+  },
+  "n_samples": 32400,
+  "hidden_state": {
+    "accuracy": 0.8948765432098765,
+    "macro_precision": 0.8216397730223723,
+    "macro_recall": 0.9002789112988436,
+    "macro_f1": 0.8536740425690386,
+    "multiclass_brier": 0.19612344242607727,
+    "negative_log_likelihood": 1.0643782415225402,
+    "confusion_matrix": [
+      [
+        17127,
+        1356,
+        618,
+        0
+      ],
+      [
+        55,
+        7049,
+        403,
+        0
+      ],
+      [
+        0,
+        365,
+        3179,
+        609
+      ],
+      [
+        0,
+        0,
+        0,
+        1639
+      ]
+    ],
+    "confusion_matrix_labels": [
+      "Healthy",
+      "Abnormal Heating",
+      "Pre-Runaway",
+      "Thermal Runaway"
+    ],
+    "within_one_band_accuracy": 0.980925925925926
+  },
+  "root_cause": {
+    "accuracy_affected_cell": 0.8685185185185185,
+    "accuracy_affected_cell_first_third": 0.6066666666666667,
+    "accuracy_affected_cell_last_third": 1.0,
+    "mean_posterior_entropy_affected_cell": 0.1573623075536894,
+    "confusion_matrix_affected_cell": [
+      [
+        1753,
+        2,
+        0,
+        0,
+        7,
+        38
+      ],
+      [
+        183,
+        716,
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        213,
+        1,
+        609,
+        0,
+        0,
+        77
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        185,
+        1,
+        0,
+        0,
+        713,
+        1
+      ],
+      [
+        1,
+        0,
+        0,
+        0,
+        0,
+        899
+      ]
+    ],
+    "confusion_matrix_labels": [
+      "Normal/Fast-Charging Heat",
+      "Temperature Sensor Fault",
+      "Cooling-System Failure",
+      "Overcharging",
+      "Internal Short Circuit",
+      "External Heat Exposure"
+    ],
+    "unaffected_cells_reporting_benign_heat_localised_faults": 0.8706666666666667
+  },
+  "sensor_reliability": {
+    "true_positives": 715,
+    "false_alarms": 55,
+    "missed_dangerous": 0,
+    "true_negatives": 31630,
+    "false_alarm_rate": 0.001735837146914944,
+    "miss_rate": 0.0,
+    "precision": 0.9285714285714286,
+    "recall": 1.0
+  },
+  "alarm_comparison": {
+    "bayesian": {
+      "true_positives": 5427,
+      "false_alarms": 1021,
+      "missed_dangerous": 365,
+      "true_negatives": 25587,
+      "false_alarm_rate": 0.038371918220084185,
+      "miss_rate": 0.06301795580110497,
+      "precision": 0.8416563275434243,
+      "recall": 0.9369820441988951,
+      "missed_dangerous_breakdown": {
+        "missed_total": 365,
+        "missed_rate_escalation_artifact_only": 364,
+        "missed_temp_actually_crossed_pre_runaway_threshold": 1
+      }
+    },
+    "threshold_warn": {
+      "true_positives": 5155,
+      "false_alarms": 1112,
+      "missed_dangerous": 637,
+      "true_negatives": 25496,
+      "false_alarm_rate": 0.0417919422730006,
+      "miss_rate": 0.1099792817679558,
+      "precision": 0.8225626296473592,
+      "recall": 0.8900207182320442
+    },
+    "threshold_critical": {
+      "true_positives": 3057,
+      "false_alarms": 710,
+      "missed_dangerous": 2735,
+      "true_negatives": 25898,
+      "false_alarm_rate": 0.02668370414912808,
+      "miss_rate": 0.4722030386740331,
+      "precision": 0.8115211043270507,
+      "recall": 0.5277969613259669
+    }
+  },
+  "sensor_fault_scenario_only": {
+    "n_samples_affected_cell": 900,
+    "true_dangerous_samples": 0,
+    "bayesian_false_alarms": 0,
+    "threshold_warn_false_alarms": 714,
+    "threshold_critical_false_alarms": 710,
+    "mean_p_sensor_faulty_after_onset": 1.0,
+    "mean_p_sensor_faulty_before_onset": 2.0196267461438452e-05
+  },
+  "calibration": {
+    "bin_mean_predicted": [
+      0.0009855475639841925,
+      0.14731287568081947,
+      0.24475669458431462,
+      0.3430808806277081,
+      0.45376878341177584,
+      0.5535410665326681,
+      0.6472034794422015,
+      0.749767100000523,
+      0.8509135788074236,
+      0.9981144500563696
+    ],
+    "bin_observed_frequency": [
+      0.012028494686441668,
+      0.2222222222222222,
+      0.20512820512820512,
+      0.15384615384615385,
+      0.2631578947368421,
+      0.35294117647058826,
+      0.3,
+      0.125,
+      0.37777777777777777,
+      0.8538132234025686
+    ],
+    "bin_counts": [
+      25689,
+      108,
+      78,
+      39,
+      38,
+      34,
+      30,
+      32,
+      45,
+      6307
+    ],
+    "expected_calibration_error": 0.03944798962173569
+  },
+  "per_scenario": {
+    "Cooling-System Failure": {
+      "n_samples": 5400,
+      "accuracy": 0.842037037037037,
+      "within_one_band_accuracy": 1.0,
+      "macro_f1_present_classes": 0.8517968578625893,
+      "n_classes_present": 3,
+      "brier": 0.27313500309967176,
+      "nll": 0.5550588440325576,
+      "root_cause_accuracy_affected_cell": 0.6766666666666666,
+      "root_cause_accuracy_affected_cell_first_third": 0.03666666666666667,
+      "root_cause_accuracy_affected_cell_last_third": 1.0,
+      "root_cause_mean_posterior_entropy_affected_cell": 0.2533186312818312
+    },
+    "External Heat Exposure": {
+      "n_samples": 5400,
+      "accuracy": 0.7857407407407407,
+      "within_one_band_accuracy": 1.0,
+      "macro_f1_present_classes": 0.7313662632620488,
+      "n_classes_present": 4,
+      "brier": 0.4000254267103945,
+      "nll": 1.2585489993455976,
+      "root_cause_accuracy_affected_cell": 0.9988888888888889,
+      "root_cause_accuracy_affected_cell_first_third": 0.9966666666666667,
+      "root_cause_accuracy_affected_cell_last_third": 1.0,
+      "root_cause_mean_posterior_entropy_affected_cell": 0.2632544928817387
+    },
+    "Fast Charging": {
+      "n_samples": 5400,
+      "accuracy": 0.9694444444444444,
+      "within_one_band_accuracy": 1.0,
+      "macro_f1_present_classes": 0.6047331242028288,
+      "n_classes_present": 3,
+      "brier": 0.057230494143630926,
+      "nll": 0.2796204565705621,
+      "root_cause_accuracy_affected_cell": 0.95,
+      "root_cause_accuracy_affected_cell_first_third": 0.85,
+      "root_cause_accuracy_affected_cell_last_third": 1.0,
+      "root_cause_mean_posterior_entropy_affected_cell": 0.2450627919878549
+    },
+    "Internal Short Circuit": {
+      "n_samples": 5400,
+      "accuracy": 0.7735185185185185,
+      "within_one_band_accuracy": 0.8855555555555555,
+      "macro_f1_present_classes": 0.5063222333487871,
+      "n_classes_present": 4,
+      "brier": 0.44370514675594225,
+      "nll": 4.287686647546049,
+      "root_cause_accuracy_affected_cell": 0.7922222222222223,
+      "root_cause_accuracy_affected_cell_first_third": 0.37666666666666665,
+      "root_cause_accuracy_affected_cell_last_third": 1.0,
+      "root_cause_mean_posterior_entropy_affected_cell": 0.04198113267998714
+    },
+    "Normal Operation": {
+      "n_samples": 5400,
+      "accuracy": 0.9992592592592593,
+      "within_one_band_accuracy": 1.0,
+      "macro_f1_present_classes": 0.49981474620229716,
+      "n_classes_present": 1,
+      "brier": 0.0013222759881762242,
+      "nll": 0.002675057873446433,
+      "root_cause_accuracy_affected_cell": 0.9977777777777778,
+      "root_cause_accuracy_affected_cell_first_third": 0.9933333333333333,
+      "root_cause_accuracy_affected_cell_last_third": 1.0,
+      "root_cause_mean_posterior_entropy_affected_cell": 0.11567775999405563
+    },
+    "Temperature Sensor Fault": {
+      "n_samples": 5400,
+      "accuracy": 0.9992592592592593,
+      "within_one_band_accuracy": 1.0,
+      "macro_f1_present_classes": 0.49981474620229716,
+      "n_classes_present": 1,
+      "brier": 0.0013223078586481498,
+      "nll": 0.0026794437670280735,
+      "root_cause_accuracy_affected_cell": 0.7955555555555556,
+      "root_cause_accuracy_affected_cell_first_third": 0.38666666666666666,
+      "root_cause_accuracy_affected_cell_last_third": 1.0,
+      "root_cause_mean_posterior_entropy_affected_cell": 0.024879036496668862
+    }
+  }
+}

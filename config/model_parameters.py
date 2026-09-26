@@ -146,9 +146,31 @@ OBS_STDS = {
 # `neighbour_c` gets the smallest weight: a hot neighbour is only weak evidence
 # about *this* cell, and a single cell in runaway is genuinely much hotter than
 # the cells around it.
+#
+# PHASE-1 CORRECTION: `temp_rate` weight lowered 0.60 -> 0.35 (diagnosis below).
+# `temp_rate` is not a fresh 10 s measurement: it is an EMA-smoothed slope over
+# a rolling 1-minute window (see models/__init__.py :: CellPipeline), so its
+# state-conditional Gaussians are far better separated, in z-score terms, than
+# any raw channel's.  Quantified on the Fast-Charging scenario (benign 85 A
+# current ramp, t = 0.5-2.5 min): at the worst observed step the tempered
+# log-likelihood swing contributed by temp_rate alone was ~48 nats (Healthy vs
+# Thermal Runaway), five to ten times larger than every other channel combined,
+# so a single transient rate reading overwhelmed four channels that all agreed
+# the cell was merely Abnormal, driving a momentary P(dangerous) as high as
+# 1.00 while temp_c was still 41 degC. This is a genuine failure to detect
+# "an internal short/runaway ramp" vs "the current stepped up 2 minutes ago" -
+# not something the reliability model can fix, because it happens upstream of
+# sensor-fault reasoning. Grid search over this weight (0.60 -> 0.10) on the
+# evaluation seeds showed the worst-case spike falls below the 0.5 alarm
+# threshold at 0.35 (worst case 0.29, vs 1.00 at 0.60) while *improving*
+# Cooling-System-Failure and Internal-Short accuracy (the rate channel matters
+# less than the emission means suggested); the only material cost is External
+# Heat Exposure accuracy (-3 points), which legitimately relies on temp_rate to
+# separate a shallow multi-cell heat wave from ordinary Healthy noise. This is
+# a disclosed trade-off, not a free win - see README Phase-1 notes.
 OBS_LIKELIHOOD_WEIGHTS = {
     "temp_c": 0.70,
-    "temp_rate": 0.60,
+    "temp_rate": 0.35,
     "voltage_dev": 0.50,
     "log_gas": 0.50,
     "neighbour_c": 0.35,
@@ -208,6 +230,51 @@ EXPECTED_ABS_VDEV_KNOTS = ([30.0, 45.0, 60.0, 75.0, 95.0], [0.010, 0.050, 0.120,
 # Temperature used as the "trusted" fallback when the primary sensor is judged
 # unreliable: the posterior-weighted blend of primary and backup readings.
 # (see models/fault_diagnosis.py :: fuse_temperature)
+
+# ---------------------------------------------------------------------------
+# 6a. OVERLAPPING THERMAL SENSORS (Phase 7A)
+# ---------------------------------------------------------------------------
+# Professor suggestion: model MULTIPLE sensors observing the SAME underlying
+# cell thermal condition explicitly, and fuse them by inferred reliability
+# rather than a fixed primary/backup binary test. This generalises (does not
+# replace) the existing primary-vs-backup reliability test above: that
+# mechanism stays exactly as-is and continues to drive the main synthetic
+# pipeline; models/sensor_fusion.py is an additive, symmetric N-sensor
+# extension of the same "reliable = tight residual, faulty = broad residual"
+# idea, reusing SENSOR_PRIOR as each sensor's independent prior.
+#
+# Three sensors per cell, physically distinct, NOT three copies of one signal:
+#   primary  - internal thermistor, fastest/most direct reading (existing
+#              `temp_primary` channel, reused unchanged).
+#   backup   - a second internal thermistor, same physical siting as primary,
+#              independent noise draw (existing `temp_backup`, reused
+#              unchanged).
+#   surface  - an external surface probe. Thermal mass between the core and
+#              the case means it LAGS the true internal temperature and reads
+#              a real (small, physical) offset besides - modelled as an
+#              exponential lag plus a fixed bias, not just extra noise.
+OVERLAPPING_SENSOR_NAMES = ("primary", "surface", "backup")
+
+# Measurement noise (1-sigma, degC) when a sensor is functioning normally.
+# Surface is noisier: it is farther from the core reaction and more exposed
+# to ambient/convective disturbance than an embedded internal thermistor.
+OVERLAPPING_SENSOR_NOISE_C = {"primary": 0.55, "surface": 0.90, "backup": 0.55}
+
+# Exponential response lag, in simulator steps (DT_SECONDS each), applied
+# only to the surface sensor's underlying (noiseless) signal - the physical
+# thermal mass between core and case a primary/backup internal thermistor
+# does not have to cross.
+OVERLAPPING_SENSOR_LAG_STEPS = {"primary": 0, "surface": 3, "backup": 0}
+
+# Small steady-state bias (degC) baked into a healthy surface reading (the
+# case genuinely runs a little cooler than the core even at equilibrium).
+OVERLAPPING_SENSOR_BIAS_C = {"primary": 0.0, "surface": -1.5, "backup": 0.0}
+
+# Reused, not duplicated: each sensor's prior probability of being reliable
+# at any given step is SENSOR_PRIOR["reliable"]; the broad "if faulty, could
+# be almost anything" residual scale reuses the same order of magnitude as
+# SENSOR_CUE_MODEL's backup_delta sd_f.
+OVERLAPPING_SENSOR_FAULT_SIGMA_C = 20.0
 
 # ---------------------------------------------------------------------------
 # 7. ROOT-CAUSE MODEL
@@ -362,10 +429,13 @@ ACTION_COST_NOTES = {
     "Emergency Shutdown": "Very high false-shutdown / unavailability cost, minimal safety loss.",
 }
 
-# Optional "probabilistic intervention assessment": a coarse model of how much
-# each action is expected to reduce the one-step dangerous-state probability.
-# This is a modelling assumption about intervention effectiveness - it is NOT
-# formal causal counterfactual inference and must not be described as such.
+# DEPRECATED (Phase 3): a flat "how much does this action help" fraction that
+# used to be multiplied directly onto the one-step dangerous probability. It is
+# kept ONLY as a backward-compatible reference value (e.g. for anyone diffing
+# against the Phase 1/2 static display) and is no longer read by
+# models/decision_engine.py or models/intervention.py. The actual intervention
+# assessment is now a controlled-transition forecast - see
+# INTERVENTION_TRANSITION_EFFECTS below and models/intervention.py.
 INTERVENTION_EFFECTIVENESS = {
     "Continue Monitoring": 0.00,
     "Request Backup Measurement": 0.02,
@@ -373,6 +443,68 @@ INTERVENTION_EFFECTIVENESS = {
     "Increase Cooling": 0.35,
     "Isolate Affected Module": 0.70,
     "Emergency Shutdown": 0.85,
+}
+
+# ---------------------------------------------------------------------------
+# 8a. INTERVENTION TRANSITION MODEL (Phase 3)
+# ---------------------------------------------------------------------------
+# CellSafe-X is a manually-specified HMM/DBN: the transition matrix is a
+# modelling assumption, not something estimated from interventional data. We
+# therefore do NOT claim Pearlian do(X) causal identification. What follows is
+# a MODEL-BASED / CONTROLLED-TRANSITION counterfactual: for each action we
+# define an explicit, documented alternative transition matrix A(action) and
+# ask "what would the k-step-ahead belief be if the pack evolved under this
+# controlled dynamics instead of the baseline dynamics from now on". This is
+# forecasting under an assumed controlled model, not a causal effect estimated
+# from data - see models/intervention.py for the full disclaimer.
+#
+# Each action is defined by two multipliers applied to TRANSITION_MATRIX:
+#   escalation_multiplier  scales every entry that moves to a MORE dangerous
+#                          state (column index > row index). <= 1 means the
+#                          action suppresses further deterioration.
+#   recovery_multiplier    scales every entry that moves to a LESS dangerous
+#                          state (column index < row index). >= 1 means the
+#                          action makes recovery somewhat more likely.
+# The diagonal (self-loop) absorbs whatever probability mass this frees up or
+# consumes, so every resulting row still sums to exactly 1 - see
+# models/intervention.py :: controlled_transition_matrix.
+#
+# Physical justification for each action (informal, not fitted to data):
+#   Continue Monitoring / Request Backup Measurement: no physical effect on
+#     the pack, so both are the identity (1.0, 1.0). Backup Measurement is
+#     information-gathering only - see the Phase 3 README note on why it must
+#     not show a fake physical risk reduction.
+#   Reduce Charging Current: removes electrical heat input, which mainly
+#     matters for the low/mid bands (a charging-driven cell has not yet
+#     started an independent exothermic reaction) - a moderate escalation cut.
+#   Increase Cooling: removes thermal energy broadly, so a stronger and
+#     more uniform escalation cut than reducing current, though still bounded
+#     - cooling cannot outpace an already-exothermic reaction as effectively
+#     as it can slow ordinary joule/charging heat.
+#   Isolate Affected Module: disconnects the cell electrically, stopping any
+#     further electrically-driven heating (current AND charging heat at once)
+#     - a strong escalation cut, weaker than shutdown only because isolation
+#     is scoped to one module rather than the whole pack.
+#   Emergency Shutdown: the strongest controlled intervention available under
+#     this model - removes essentially all further externally-driven
+#     escalation. It is NOT modelled as reversing an already-exothermic
+#     Thermal Runaway (see the tiny, unchanged Runaway self-loop) - shutdown
+#     stops making things worse, it does not undo damage already done. This
+#     mirrors the loss matrix, where Emergency Shutdown is cheapest specifically
+#     in the Thermal Runaway column, not because it cures it.
+#
+# Multipliers are monotonic across actions by design (escalation_multiplier
+# strictly non-increasing, recovery_multiplier strictly non-decreasing, from
+# Continue Monitoring down to Emergency Shutdown) so that a stronger action
+# can never be assessed as riskier than a weaker one - this is asserted by
+# tests/test_intervention.py, not just claimed here.
+INTERVENTION_TRANSITION_EFFECTS = {
+    "Continue Monitoring":        {"escalation_multiplier": 1.00, "recovery_multiplier": 1.00},
+    "Request Backup Measurement": {"escalation_multiplier": 1.00, "recovery_multiplier": 1.00},
+    "Reduce Charging Current":    {"escalation_multiplier": 0.65, "recovery_multiplier": 1.15},
+    "Increase Cooling":           {"escalation_multiplier": 0.45, "recovery_multiplier": 1.35},
+    "Isolate Affected Module":    {"escalation_multiplier": 0.25, "recovery_multiplier": 1.50},
+    "Emergency Shutdown":         {"escalation_multiplier": 0.10, "recovery_multiplier": 1.75},
 }
 
 # ---------------------------------------------------------------------------
@@ -412,6 +544,205 @@ SCENARIO_TRUE_CAUSE = {
 }
 
 # ---------------------------------------------------------------------------
+# 10a. PACK TOPOLOGY (Phase 4) - single source of truth
+# ---------------------------------------------------------------------------
+# The six cells are a linear string; cell i exchanges heat only with i-1 and
+# i+1 (data/battery_simulator.py's thermal integration and
+# models/propagation.py's coupling model both call `pack_neighbours` below,
+# so there is exactly one topology definition in the whole project, not two
+# that could quietly drift apart).
+PACK_TOPOLOGY = "linear_chain"
+
+
+def pack_neighbours(cell: int, n_cells: int = N_CELLS) -> tuple[int, ...]:
+    """Cell indices that physically/thermally border `cell`."""
+    return tuple(j for j in (cell - 1, cell + 1) if 0 <= j < n_cells)
+
+
+# ---------------------------------------------------------------------------
+# 10b. CROSS-CELL PROPAGATION MODEL (Phase 4)
+# ---------------------------------------------------------------------------
+# IMPORTANT SCOPE NOTE: cells are filtered independently (models/__init__.py
+# :: CellPipeline runs one BayesianFilter per cell); there is no joint
+# multi-cell HMM. The propagation model below is a SEPARATE, documented
+# forecasting layer built on top of the independent per-cell posteriors - it
+# asks "how much should a neighbour's OWN forecast be nudged upward given how
+# dangerous the adjacent cell is projected to become", not "what is the exact
+# joint posterior over all six cells" (that would need the 4^6-state coupled
+# DBN the README already lists as future work).
+#
+# Mechanism: a target cell's controlled transition matrix (same scale/
+# renormalise construction as models/intervention.py) gets its escalation
+# entries multiplied by
+#     escalation_multiplier = 1 + PROPAGATION_GAIN * pressure
+#     pressure = sum over neighbours j of PROPAGATION_COUPLING_STRENGTH * P(dangerous)_j
+# where P(dangerous)_j is neighbour j's OWN independent (uncoupled) forecast
+# at the same horizon. Using each neighbour's independent forecast (rather
+# than solving a fixed point over the whole pack) avoids circular dependencies
+# between adjacent cells and keeps the model a one-step, tractable, clearly-
+# documented approximation - not an attempt at an exact joint solution.
+#
+# PROPAGATION_COUPLING_STRENGTH is a normalised [0, 1] edge weight. The linear
+# chain is symmetric and uncoupled by construction from K_NEIGH's sign (heat
+# flows whichever direction is colder), so all edges share one weight; a
+# richer topology would need a per-edge matrix instead of a scalar.
+# PROPAGATION_GAIN converts that pressure into an escalation-probability
+# multiplier increase; it is an ENGINEERED, undocumented-in-data constant
+# (like the Phase 3 intervention multipliers), not fitted to the simulator's
+# K_NEIGH thermal-conduction coefficient - translating a continuous-temperature
+# conduction gain into a discrete-state escalation-probability multiplier is
+# a modelling choice, disclosed here rather than presented as derived.
+# PROPAGATION_MAX_ESCALATION_MULTIPLIER caps how much a neighbour's escalation
+# risk can be amplified, so a single dangerous cell cannot deterministically
+# drag its neighbour's probability mass to zero self-loop.
+PROPAGATION_COUPLING_STRENGTH = 1.0
+PROPAGATION_GAIN = 2.0
+PROPAGATION_MAX_ESCALATION_MULTIPLIER = 3.0
+
+# ---------------------------------------------------------------------------
+# 10c. ACTIVE SENSING / VALUE OF INFORMATION (Phase 4)
+# ---------------------------------------------------------------------------
+# Candidate channels for expected-information-gain analysis are restricted to
+# OBS_CHANNELS (section 5 above) because those are the only channels with a
+# well-defined state-conditional likelihood P(y | Z) the filter already uses -
+# "current" and "cooling_eff" feed the root-cause classifier, not the hidden-
+# state filter, so VoI for the HIDDEN STATE cannot be mathematically formed
+# for them without inventing an emission model that does not exist. A repeat
+# reading of `temp_c` stands in for "backup temperature" (an independent
+# confirming measurement of the same emission channel).
+ACTIVE_SENSING_CANDIDATE_CHANNELS = OBS_CHANNELS
+
+# Monte Carlo sample count for the EIG/EVI expectation over possible
+# observations, and a fixed seed so every call is exactly reproducible.
+ACTIVE_SENSING_MC_SAMPLES = 4000
+ACTIVE_SENSING_MC_SEED = 20240
+
+# Gating thresholds for "should we actually request another measurement"
+# (see models/active_sensing.py :: recommend_measurement). Centralised here,
+# not scattered as UI-only magic numbers:
+#   CONFIDENCE   - if the current posterior's max probability already exceeds
+#                  this, the state is not ambiguous enough to be worth asking.
+#   MIN_EIG_NATS - if even the best candidate channel's expected information
+#                  gain is below this, no measurement is worth the delay.
+#   EMERGENCY_DANGEROUS_P - if P(dangerous) is at or above this, delaying
+#                  action to gather more evidence is treated as unsafe
+#                  regardless of how informative a measurement would be.
+ACTIVE_SENSING_CONFIDENCE_THRESHOLD = 0.95
+ACTIVE_SENSING_MIN_EIG_NATS = 0.02
+ACTIVE_SENSING_EMERGENCY_DANGEROUS_P = 0.90
+
+# ---------------------------------------------------------------------------
+# 10d. CANONICAL SENSOR REGISTRY (Phase 7B, Goal 1)
+# ---------------------------------------------------------------------------
+# "What is the set of sensors CellSafe-X understands?" - one table, built
+# from the constants already defined above rather than repeating them, so it
+# cannot silently drift out of sync with OBS_CHANNELS / CAUSE_FEATURES /
+# ACTIVE_SENSING_CANDIDATE_CHANNELS / OVERLAPPING_SENSOR_NAMES.
+#
+# Fields per entry:
+#   physical_quantity   what it measures (not which channel it becomes)
+#   family               overlap-group key; sensors sharing a family observe
+#                        the SAME latent quantity (see
+#                        models.sensor_fusion). Sensors in different families
+#                        are never fused together even if both are
+#                        temperatures (e.g. neighbour_temp is a different
+#                        cell's surface, not this cell's core).
+#   overlaps             True iff >=2 registry entries share `family`
+#   hmm_eligible         True iff this sensor feeds an OBS_CHANNELS emission
+#                        (directly, or - for the three overlapping probes -
+#                        via models.sensor_fusion into `temp_c`)
+#   active_sensing_eligible  True iff EIG/EVI may recommend requesting this
+#                        reading. Only ONE representative per overlapping
+#                        family is eligible (Goal 4: EIG operates on the
+#                        single abstract `temp_c` channel, so treating
+#                        primary/surface/backup as three independent
+#                        active-sensing choices would triple-count the same
+#                        evidence).
+#   evidence_type        "physical_state" (reaches the hidden-state filter)
+#                        or "contextual" (root-cause only)
+#   units
+#   missing_evidence_support  "marginalised" (verified: this channel is a
+#                        member of OBS_CHANNELS, so
+#                        observation_log_likelihood already skips it cleanly
+#                        when absent/non-finite - see models/bayesian_filter.py)
+#                        or "required" (root-cause's build_cause_features
+#                        hard-subscripts this key; a missing contextual
+#                        channel raises KeyError today, not silently defaulted)
+#
+# Goal 4 (active-sensing/registry alignment): which sensor FAMILY backs each
+# abstract HMM emission channel. `temp_rate` has no sensor of its own - it is
+# the slope of the same core-temperature family's fused reading - so it maps
+# to the same family as `temp_c` rather than getting a fake extra sensor.
+# `models/active_sensing.py` uses this to report which physical sensor
+# family an EIG/EVI recommendation actually refers to, and so that
+# requesting "more temp_c evidence" is never double-counted against
+# primary/surface/backup as three separate active-sensing opportunities.
+OBS_CHANNEL_TO_SENSOR_FAMILY: dict[str, str] = {
+    "temp_c": "cell_core_temperature",
+    "temp_rate": "cell_core_temperature",
+    "voltage_dev": "voltage",
+    "log_gas": "gas",
+    "neighbour_c": "neighbour_cell_temperature",
+}
+
+SENSOR_REGISTRY: dict[str, dict[str, object]] = {
+    "temp_primary": {
+        "physical_quantity": "temperature", "family": "cell_core_temperature",
+        "overlaps": True, "hmm_eligible": True, "active_sensing_eligible": True,
+        "evidence_type": "physical_state", "units": "degC",
+        "missing_evidence_support": "marginalised",
+    },
+    "temp_surface": {
+        "physical_quantity": "temperature", "family": "cell_core_temperature",
+        "overlaps": True, "hmm_eligible": True, "active_sensing_eligible": False,
+        "evidence_type": "physical_state", "units": "degC",
+        "missing_evidence_support": "marginalised",
+    },
+    "temp_backup": {
+        "physical_quantity": "temperature", "family": "cell_core_temperature",
+        "overlaps": True, "hmm_eligible": True, "active_sensing_eligible": False,
+        "evidence_type": "physical_state", "units": "degC",
+        "missing_evidence_support": "marginalised",
+    },
+    "neighbour_temp": {
+        "physical_quantity": "temperature", "family": "neighbour_cell_temperature",
+        "overlaps": False, "hmm_eligible": True, "active_sensing_eligible": True,
+        "evidence_type": "physical_state", "units": "degC",
+        "missing_evidence_support": "marginalised",
+    },
+    "voltage_dev": {
+        "physical_quantity": "voltage_deviation", "family": "voltage",
+        "overlaps": False, "hmm_eligible": True, "active_sensing_eligible": True,
+        "evidence_type": "physical_state", "units": "V",
+        "missing_evidence_support": "marginalised",
+    },
+    "log_gas": {
+        "physical_quantity": "vent_gas_concentration", "family": "gas",
+        "overlaps": False, "hmm_eligible": True, "active_sensing_eligible": True,
+        "evidence_type": "physical_state", "units": "log ppm",
+        "missing_evidence_support": "marginalised",
+    },
+    "current": {
+        "physical_quantity": "pack_current", "family": "current",
+        "overlaps": False, "hmm_eligible": False, "active_sensing_eligible": False,
+        "evidence_type": "contextual", "units": "A",
+        "missing_evidence_support": "required",
+    },
+    "soc": {
+        "physical_quantity": "state_of_charge", "family": "state_of_charge",
+        "overlaps": False, "hmm_eligible": False, "active_sensing_eligible": False,
+        "evidence_type": "contextual", "units": "fraction",
+        "missing_evidence_support": "required",
+    },
+    "cooling_eff": {
+        "physical_quantity": "cooling_effectiveness", "family": "cooling",
+        "overlaps": False, "hmm_eligible": False, "active_sensing_eligible": False,
+        "evidence_type": "contextual", "units": "fraction",
+        "missing_evidence_support": "required",
+    },
+}
+
+# ---------------------------------------------------------------------------
 # 11. SANITY CHECKS (run at import time - cheap and catches typos immediately)
 # ---------------------------------------------------------------------------
 def _validate() -> None:
@@ -432,6 +763,59 @@ def _validate() -> None:
         assert set(CAUSE_MEANS[c]) == set(CAUSE_FEATURES)
         assert set(CAUSE_STDS[c]) == set(CAUSE_FEATURES)
         assert all(v > 0 for v in CAUSE_STDS[c].values())
+    assert set(INTERVENTION_TRANSITION_EFFECTS) == set(ACTIONS)
+    for a, eff in INTERVENTION_TRANSITION_EFFECTS.items():
+        assert 0.0 <= eff["escalation_multiplier"] <= 1.0, a
+        assert eff["recovery_multiplier"] >= 1.0, a
+    # Monotonicity: a physically stronger action must never be configured with
+    # a weaker (higher) escalation multiplier or a weaker (lower) recovery
+    # multiplier than a milder action - see the Phase 3 comment above.
+    strength_order = [
+        "Continue Monitoring", "Request Backup Measurement", "Reduce Charging Current",
+        "Increase Cooling", "Isolate Affected Module", "Emergency Shutdown",
+    ]
+    esc = [INTERVENTION_TRANSITION_EFFECTS[a]["escalation_multiplier"] for a in strength_order]
+    rec = [INTERVENTION_TRANSITION_EFFECTS[a]["recovery_multiplier"] for a in strength_order]
+    assert all(esc[i] >= esc[i + 1] for i in range(len(esc) - 1)), "escalation_multiplier must be non-increasing with action strength"
+    assert all(rec[i] <= rec[i + 1] for i in range(len(rec) - 1)), "recovery_multiplier must be non-decreasing with action strength"
+    for i in range(N_CELLS):
+        nb = pack_neighbours(i)
+        assert all(0 <= j < N_CELLS and j != i for j in nb)
+        # symmetric linear-chain topology: j is my neighbour iff i is j's neighbour
+        assert all(i in pack_neighbours(j) for j in nb)
+    assert 0.0 <= PROPAGATION_COUPLING_STRENGTH <= 1.0
+    assert PROPAGATION_GAIN >= 0.0
+    assert PROPAGATION_MAX_ESCALATION_MULTIPLIER >= 1.0
+    assert set(ACTIVE_SENSING_CANDIDATE_CHANNELS) <= set(OBS_CHANNELS)
+    assert ACTIVE_SENSING_MC_SAMPLES > 0
+    assert 0.0 <= ACTIVE_SENSING_CONFIDENCE_THRESHOLD <= 1.0
+    assert ACTIVE_SENSING_MIN_EIG_NATS >= 0.0
+    assert 0.0 <= ACTIVE_SENSING_EMERGENCY_DANGEROUS_P <= 1.0
+    assert set(OVERLAPPING_SENSOR_NOISE_C) == set(OVERLAPPING_SENSOR_NAMES)
+    assert set(OVERLAPPING_SENSOR_LAG_STEPS) == set(OVERLAPPING_SENSOR_NAMES)
+    assert set(OVERLAPPING_SENSOR_BIAS_C) == set(OVERLAPPING_SENSOR_NAMES)
+    assert all(v > 0 for v in OVERLAPPING_SENSOR_NOISE_C.values())
+    assert all(v >= 0 for v in OVERLAPPING_SENSOR_LAG_STEPS.values())
+    assert OVERLAPPING_SENSOR_FAULT_SIGMA_C > 0.0
+    # SENSOR_REGISTRY must stay in sync with the constants it is derived from
+    # (Goal 1: exactly one source of truth), not silently drift.
+    for name in OVERLAPPING_SENSOR_NAMES:
+        assert f"temp_{name}" in SENSOR_REGISTRY, name
+        assert SENSOR_REGISTRY[f"temp_{name}"]["overlaps"] is True
+    overlap_families: dict[str, int] = {}
+    for entry in SENSOR_REGISTRY.values():
+        overlap_families[entry["family"]] = overlap_families.get(entry["family"], 0) + 1
+    for entry in SENSOR_REGISTRY.values():
+        assert entry["overlaps"] == (overlap_families[entry["family"]] > 1), entry
+    # exactly one active-sensing-eligible representative per overlapping family
+    active_families: dict[str, int] = {}
+    for entry in SENSOR_REGISTRY.values():
+        if entry["active_sensing_eligible"]:
+            active_families[entry["family"]] = active_families.get(entry["family"], 0) + 1
+    assert all(v == 1 for v in active_families.values()), active_families
+    assert set(OBS_CHANNEL_TO_SENSOR_FAMILY) == set(OBS_CHANNELS)
+    assert set(ACTIVE_SENSING_CANDIDATE_CHANNELS) <= set(OBS_CHANNEL_TO_SENSOR_FAMILY)
+    assert set(OBS_CHANNEL_TO_SENSOR_FAMILY.values()) <= set(overlap_families)
 
 
 _validate()

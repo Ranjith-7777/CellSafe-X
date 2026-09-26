@@ -32,6 +32,7 @@ from config import model_parameters as P
 from models.bayesian_filter import (
     BayesianFilter,
     FilterStep,
+    calibrated_posterior,
     log_gaussian,
     log_normalise,
     log_sum_exp,
@@ -46,6 +47,30 @@ from models.decision_engine import (
     recommend_action,
     threshold_baseline,
 )
+from models.intervention import (
+    InterventionForecast,
+    InterventionSummary,
+    compare_interventions,
+    controlled_transition_matrix,
+    forecast_under_intervention,
+    forecast_under_intervention_multi_horizon,
+    intervention_summary,
+)
+from models.propagation import (
+    CellPropagationForecast,
+    PackPropagationForecast,
+    forecast_pack_propagation,
+)
+from models.active_sensing import (
+    ActiveSensingRecommendation,
+    InformationGainResult,
+    ValueOfInformationResult,
+    expected_information_gain,
+    expected_value_of_information,
+    posterior_entropy,
+    rank_information_gain,
+    recommend_measurement,
+)
 from models.fault_diagnosis import (
     RootCauseResult,
     SensorReliabilityResult,
@@ -56,6 +81,7 @@ from models.fault_diagnosis import (
     fuse_temperature,
     sensor_reliability,
 )
+from models.sensor_fusion import OverlappingSensorFusion, select_temperature_evidence
 from models.risk_forecast import (
     RiskForecast,
     dangerous_probability,
@@ -66,34 +92,55 @@ from models.risk_forecast import (
 )
 
 __all__ = [
+    "ActiveSensingRecommendation",
     "BayesianFilter",
     "CellPipeline",
+    "OverlappingSensorFusion",
+    "CellPropagationForecast",
     "DecisionResult",
     "FilterStep",
+    "InformationGainResult",
+    "InterventionForecast",
+    "InterventionSummary",
+    "PackPropagationForecast",
     "PipelineOutput",
     "RiskForecast",
     "RootCauseResult",
     "SensorReliabilityResult",
     "ThresholdResult",
+    "ValueOfInformationResult",
     "build_cause_features",
+    "calibrated_posterior",
+    "compare_interventions",
     "compare_with_threshold",
+    "controlled_transition_matrix",
     "dangerous_probability",
     "diagnose_root_cause",
     "expected_abs_voltage_dev",
+    "expected_information_gain",
     "expected_log_gas",
     "expected_losses",
+    "expected_value_of_information",
+    "forecast_pack_propagation",
     "forecast_risk",
+    "forecast_under_intervention",
+    "forecast_under_intervention_multi_horizon",
     "fuse_temperature",
+    "intervention_summary",
     "log_gaussian",
     "log_normalise",
     "log_sum_exp",
     "observation_likelihood_normalised",
     "observation_log_likelihood",
     "pack_risk",
+    "posterior_entropy",
     "propagate",
+    "rank_information_gain",
     "recommend_action",
+    "recommend_measurement",
     "risk_trajectory",
     "run_pipeline",
+    "select_temperature_evidence",
     "sensor_reliability",
     "threshold_baseline",
 ]
@@ -124,13 +171,33 @@ class PipelineOutput:
     forecast: RiskForecast
     decision: DecisionResult
     threshold: ThresholdResult
+    sensor_fusion: Optional[OverlappingSensorFusion] = None  # only set when temperature_fusion="overlapping"
 
 
 class CellPipeline:
     """Streaming inference for a single cell.  Call `step()` once per time step."""
 
-    def __init__(self, cell: int = 0) -> None:
+    def __init__(self, cell: int = 0, temperature_fusion: str = "legacy") -> None:
+        """`temperature_fusion`:
+          "legacy"      - unchanged Phase 1-6 behaviour: temp_c comes from
+                           `fault_diagnosis.sensor_reliability`'s primary/
+                           backup binary-hypothesis fusion. This remains the
+                           DEFAULT so every frozen baseline result stays
+                           reproducible unless a caller opts in.
+          "overlapping" - Phase-7B: temp_c comes from
+                           `models.sensor_fusion.select_temperature_evidence`,
+                           the N-sensor (primary/surface/backup) reliability-
+                           aware fusion, correctly degrading to 2 or 1
+                           sensors, or omitting temp_c if none are present.
+        `sensor_reliability` (and therefore root-cause's `p_sensor_faulty`
+        soft evidence and the decision engine's reasoning text) is computed
+        identically in both modes - only the temperature VALUE fed to the
+        HMM changes.
+        """
+        if temperature_fusion not in ("legacy", "overlapping"):
+            raise ValueError(f"unknown temperature_fusion {temperature_fusion!r}")
         self.cell = cell
+        self.temperature_fusion = temperature_fusion
         self.filter = BayesianFilter()
         self._prev_primary: Optional[float] = None
         self._ema_temp: Optional[float] = None
@@ -169,12 +236,23 @@ class CellPipeline:
             "soc": float(row["soc"]),
             "cooling_eff": float(row["cooling_eff"]),
         }
+        if "temp_surface" in row and row["temp_surface"] is not None and np.isfinite(row["temp_surface"]):
+            reading["temp_surface"] = float(row["temp_surface"])
         if self._prev_primary is not None:
             reading["temp_primary_prev"] = self._prev_primary
 
-        # 1) how much do we trust the primary thermistor?
+        # 1) how much do we trust the primary thermistor? Unchanged in both
+        # fusion modes - this still drives root-cause's soft evidence and the
+        # decision engine's reasoning text.
         sensor = sensor_reliability(reading)
-        fused = sensor.fused_temp_c
+
+        sensor_fusion_detail: Optional[OverlappingSensorFusion] = None
+        if self.temperature_fusion == "overlapping":
+            fused, sensor_fusion_detail = select_temperature_evidence(reading)
+            if fused is None:
+                fused = sensor.fused_temp_c  # reading had no temp sensor at all; unreachable in practice
+        else:
+            fused = sensor.fused_temp_c
 
         # 2) smoothed temperature and heating rate
         self._ema_temp = fused if self._ema_temp is None else (
@@ -230,20 +308,23 @@ class CellPipeline:
             forecast=fc,
             decision=decision,
             threshold=thr,
+            sensor_fusion=sensor_fusion_detail,
         )
         self.history.append(out)
         return out
 
 
-def run_pipeline(frame: pd.DataFrame) -> Dict[int, List[PipelineOutput]]:
+def run_pipeline(frame: pd.DataFrame, temperature_fusion: str = "legacy") -> Dict[int, List[PipelineOutput]]:
     """Run the full pipeline over every cell of a simulated run.
 
     `frame` is the long-format DataFrame produced by
     data.battery_simulator.simulate_pack.  Returns {cell_index: [PipelineOutput]}.
+    `temperature_fusion` - see CellPipeline.__init__; default "legacy"
+    reproduces the frozen Phase 1-6 baseline exactly.
     """
     results: Dict[int, List[PipelineOutput]] = {}
     for cell, group in frame.groupby("cell", sort=True):
-        pipe = CellPipeline(cell=int(cell))
+        pipe = CellPipeline(cell=int(cell), temperature_fusion=temperature_fusion)
         group = group.sort_values("step")
         results[int(cell)] = [pipe.step(row) for _, row in group.iterrows()]
     return results

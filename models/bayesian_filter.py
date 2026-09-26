@@ -209,3 +209,35 @@ class BayesianFilter:
     def run(self, observations: Iterable[Mapping[str, float]]) -> List[FilterStep]:
         """Filter a whole sequence from the current belief, returning every step."""
         return [self.update(obs) for obs in observations]
+
+
+# ---------------------------------------------------------------------------
+# post-hoc posterior calibration (temperature scaling)
+# ---------------------------------------------------------------------------
+def calibrated_posterior(posterior: np.ndarray, temperature: float) -> np.ndarray:
+    """Softens (temperature > 1) or sharpens (temperature < 1) a posterior for
+    REPORTING PURPOSES ONLY.
+
+    This is deliberately NOT applied inside `BayesianFilter.update`: the belief
+    fed back into next step's `predict()` must stay the exact, un-rescaled
+    Bayesian posterior, otherwise the recursion itself would be silently
+    changed and would no longer be exact filtering. Temperature scaling is
+    applied only when a probability is about to be *displayed or scored*,
+    exactly like temperature scaling on a classifier's logits: it reshapes the
+    output distribution without touching the model's internal state.
+
+    ``calibrated = normalise(posterior ** (1 / temperature))``
+
+    temperature == 1.0 is the identity (returns `posterior` unchanged, up to
+    renormalisation). temperature > 1.0 flattens an over-confident posterior;
+    temperature < 1.0 sharpens an under-confident one. The MAP state (argmax)
+    is invariant to any temperature > 0, so accuracy is never affected - only
+    Brier score, NLL and calibration error are.
+    """
+    posterior = np.asarray(posterior, dtype=float)
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+    if temperature == 1.0:
+        return posterior / posterior.sum()
+    log_p = np.log(np.clip(posterior, 1e-300, None)) / temperature
+    return log_normalise(log_p)

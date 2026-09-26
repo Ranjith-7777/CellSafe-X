@@ -1,0 +1,162 @@
+[
+  {
+    "fault": "all_healthy",
+    "methods": {
+      "naive_single": {
+        "mean_abs_temp_error_c": 0.45775085111035885,
+        "false_alarms": 82,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      },
+      "naive_average": {
+        "mean_abs_temp_error_c": 0.6862786687103397,
+        "false_alarms": 59,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 0.9999999999999806
+      },
+      "reliability_fusion": {
+        "mean_abs_temp_error_c": 0.5702238208524398,
+        "false_alarms": 68,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 0.9999999999999999
+      }
+    },
+    "mean_disagreement_c": 1.0638364187380858,
+    "mean_reliability": {
+      "primary": 0.9846734591417874,
+      "surface": 0.829247061489119,
+      "backup": 0.9962786536127377
+    }
+  },
+  {
+    "fault": "positive_bias",
+    "methods": {
+      "naive_single": {
+        "mean_abs_temp_error_c": 25.04624198983326,
+        "false_alarms": 123,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      },
+      "naive_average": {
+        "mean_abs_temp_error_c": 7.6773999379054025,
+        "false_alarms": 79,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 0.9999999999999997
+      },
+      "reliability_fusion": {
+        "mean_abs_temp_error_c": 1.0809176154560034,
+        "false_alarms": 110,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      }
+    },
+    "mean_disagreement_c": 12.318687725949612,
+    "mean_reliability": {
+      "primary": 0.035548169621201116,
+      "surface": 0.8698179762676457,
+      "backup": 0.9184145477193884
+    }
+  },
+  {
+    "fault": "negative_bias",
+    "methods": {
+      "naive_single": {
+        "mean_abs_temp_error_c": 24.953758010166737,
+        "false_alarms": 46,
+        "missed_dangerous": 12,
+        "true_positives": 43,
+        "max_p_dangerous": 1.0
+      },
+      "naive_average": {
+        "mean_abs_temp_error_c": 8.989266728761264,
+        "false_alarms": 41,
+        "missed_dangerous": 1,
+        "true_positives": 54,
+        "max_p_dangerous": 0.9999999999984778
+      },
+      "reliability_fusion": {
+        "mean_abs_temp_error_c": 2.0062815436480843,
+        "false_alarms": 111,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      }
+    },
+    "mean_disagreement_c": 11.329837560862114,
+    "mean_reliability": {
+      "primary": 0.042830356499348556,
+      "surface": 0.8807645226908265,
+      "backup": 0.9000144941205497
+    }
+  },
+  {
+    "fault": "stuck_sensor",
+    "methods": {
+      "naive_single": {
+        "mean_abs_temp_error_c": 11.954857155567833,
+        "false_alarms": 8,
+        "missed_dangerous": 55,
+        "true_positives": 0,
+        "max_p_dangerous": 0.9999999999999972
+      },
+      "naive_average": {
+        "mean_abs_temp_error_c": 4.635155652873896,
+        "false_alarms": 41,
+        "missed_dangerous": 1,
+        "true_positives": 54,
+        "max_p_dangerous": 0.999999999998864
+      },
+      "reliability_fusion": {
+        "mean_abs_temp_error_c": 1.5535454266827526,
+        "false_alarms": 79,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      }
+    },
+    "mean_disagreement_c": 5.579975422739067,
+    "mean_reliability": {
+      "primary": 0.3849202159570913,
+      "surface": 0.8824037222473872,
+      "backup": 0.8695834935262915
+    }
+  },
+  {
+    "fault": "noisy_sensor",
+    "methods": {
+      "naive_single": {
+        "mean_abs_temp_error_c": 4.216447523052872,
+        "false_alarms": 124,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      },
+      "naive_average": {
+        "mean_abs_temp_error_c": 1.6536789900750297,
+        "false_alarms": 119,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      },
+      "reliability_fusion": {
+        "mean_abs_temp_error_c": 1.1542252639325514,
+        "false_alarms": 109,
+        "missed_dangerous": 0,
+        "true_positives": 55,
+        "max_p_dangerous": 1.0000000000000002
+      }
+    },
+    "mean_disagreement_c": 2.279636015953709,
+    "mean_reliability": {
+      "primary": 0.5012253756849181,
+      "surface": 0.8656097549520041,
+      "backup": 0.8569814342083901
+    }
+  }
+]

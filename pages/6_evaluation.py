@@ -1,6 +1,8 @@
 """Concise synthetic evaluation results."""
+import json
 from pathlib import Path
 import numpy as np
+import pandas as pd
 import streamlit as st
 from dashboard import charts
 from dashboard.evaluation_data import EvaluationDataError, load_evaluation_metrics
@@ -28,6 +30,16 @@ with right:
     with panel("Scenario-wise accuracy"):
         st.plotly_chart(charts.scenario_bar_chart(metrics["per_scenario"],height=300),width="stretch",key="results_scenario")
 
+cc=metrics.get("calibration_correction");mb=metrics["alarm_comparison"]["bayesian"].get("missed_dangerous_breakdown");rc=metrics["root_cause"]
+if cc and mb:
+    items2=[
+        ("ECE (raw → calibrated)",f"{cc['uncalibrated']['ece_p_dangerous']*100:.1f}% → {cc['calibrated']['ece_p_dangerous']*100:.1f}%","Temperature-scaled posterior, fit on a disjoint seed range",ACCENT_CYAN),
+        ("Latent-state safety misses",f"{mb['missed_total']:,}","Ground truth says Pre-Runaway/Runaway but no alarm fired, see docs/EVALUATION.md",WARNING),
+        ("...of which thermal-threshold misses",f"{mb['missed_temp_actually_crossed_pre_runaway_threshold']:,}","Genuinely ≥58°C and missed - the safety-critical subset",ACCENT_GREEN),
+        ("Root cause (first third → last third)",f"{pct(rc['accuracy_affected_cell_first_third'])} → {pct(rc['accuracy_affected_cell_last_third'])}","Improves as each scenario's signature develops",ACCENT_CYAN),
+    ]
+    metric_grid([(label,value,note,colour,False) for label,value,note,colour in items2])
+
 left,right=st.columns(2,gap="medium")
 with left:
     with panel("Sensor-fault false-alarm comparison"):
@@ -37,3 +49,48 @@ with left:
 with right:
     with panel("Current limitations"):
         render_html('<div class="csx-limitations"><ul><li>Evaluation uses synthetic scenarios and hand-specified parameters.</li><li>Posterior probabilities remain over-confident in the highest-risk bin.</li><li>Cells are filtered independently; thermal coupling is observed, not jointly inferred.</li><li>Results do not establish real-world safety or deployment readiness.</li></ul></div>')
+
+bw_dir = Path("results/baum_welch")
+if (bw_dir / "metrics_engineered.json").exists() and (bw_dir / "metrics_learned.json").exists():
+    with st.expander("Baum-Welch learned HMM (Phase 7C, experimental - not the production model)"):
+        st.caption(
+            "The engineered HMM above remains the production model everywhere else in "
+            "this dashboard. This section only compares it against an EM-learned "
+            "variant on the same held-out trajectories - see docs and "
+            "`python -m evaluation.evaluate_baum_welch`."
+        )
+        me = json.loads((bw_dir / "metrics_engineered.json").read_text(encoding="utf-8"))
+        ml = json.loads((bw_dir / "metrics_learned.json").read_text(encoding="utf-8"))
+        hse, hsl = me["hidden_state"], ml["hidden_state"]
+        st.dataframe(pd.DataFrame({
+            "Metric": ["Accuracy", "Macro F1", "Brier", "NLL", "False alarms", "Genuinely-hot misses"],
+            "Engineered": [
+                num(hse["accuracy"], 3), num(hse["macro_f1"], 3), num(hse["multiclass_brier"], 3),
+                num(hse["negative_log_likelihood"], 3),
+                str(me["alarm_comparison"]["bayesian"]["false_alarms"]),
+                str(me["alarm_comparison"]["bayesian"]["missed_dangerous_breakdown"]["missed_temp_actually_crossed_pre_runaway_threshold"]),
+            ],
+            "Baum-Welch": [
+                num(hsl["accuracy"], 3), num(hsl["macro_f1"], 3), num(hsl["multiclass_brier"], 3),
+                num(hsl["negative_log_likelihood"], 3),
+                str(ml["alarm_comparison"]["bayesian"]["false_alarms"]),
+                str(ml["alarm_comparison"]["bayesian"]["missed_dangerous_breakdown"]["missed_temp_actually_crossed_pre_runaway_threshold"]),
+            ],
+        }), width="stretch", hide_index=True)
+
+        if (bw_dir / "convergence.csv").exists():
+            conv = pd.read_csv(bw_dir / "convergence.csv")
+            st.caption("EM convergence (training log-likelihood per iteration)")
+            st.line_chart(conv.pivot(index="iteration", columns="initialization", values="log_likelihood"))
+
+        if (bw_dir / "learned_parameters.json").exists() and (bw_dir / "engineered_parameters.json").exists():
+            lp = json.loads((bw_dir / "learned_parameters.json").read_text(encoding="utf-8"))
+            ep = json.loads((bw_dir / "engineered_parameters.json").read_text(encoding="utf-8"))
+            st.caption(f"Selected initialisation: **{lp['selected_initialization']}**")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.caption("Engineered transition matrix")
+                st.dataframe(pd.DataFrame(np.array(ep["A"]).round(4)), width="stretch")
+            with c2:
+                st.caption("Baum-Welch learned transition matrix")
+                st.dataframe(pd.DataFrame(np.array(lp["params"]["A"]).round(4)), width="stretch")

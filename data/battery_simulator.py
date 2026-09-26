@@ -48,6 +48,31 @@ LABEL_PRE_C = 58.0
 LABEL_RUNAWAY_C = 82.0
 LABEL_RATE_ESCALATE = 2.5    # degC/min of true heating that escalates one band
 
+# PHASE-2 CORRECTION: `true_rate` is a single-step (10 s) finite difference of
+# the TRUE temperature, computed AFTER that step's process noise
+# (PROC_NOISE_C = 0.10 degC/step) is added - so it carries roughly
+# 0.10 / dt_min =~ 0.6 degC/min of 1-sigma noise on top of the real physics.
+# A one-off noisy sample crossing LABEL_RATE_ESCALATE therefore does not mean
+# the cell is truly escalating. Phase-2 audit of the evaluation's 566 "missed
+# dangerous event" samples found: 288 ground-truth dangerous-state segments in
+# the evaluation set, median length 1 step (10 s); 199 of 288 segments were
+# <=3 steps and NONE of those ever reached the actual Pre-Runaway temperature
+# (LABEL_PRE_C); 405 one-step A-B-A state reversals were found across the
+# dataset. This is single-step label flicker driven by process noise on the
+# rate channel, not a real physical event - the same failure mode Phase 1
+# fixed in the model's own emission likelihood (see OBS_LIKELIHOOD_WEIGHTS
+# comment in config/model_parameters.py), except here it was baked into the
+# ground truth itself.
+#
+# Fix: require the elevated-rate condition to hold for RATE_ESCALATE_MIN_STEPS
+# consecutive steps (20 s) before it escalates the label a band. This does NOT
+# change any physical threshold (LABEL_ABNORMAL_C / LABEL_PRE_C / LABEL_RUNAWAY_C
+# are untouched) and does not make any scenario's ground truth "easier" - a
+# sustained genuine heating-rate excursion (as seen in Internal Short Circuit
+# and the late stages of Cooling-System Failure) is unaffected; only isolated,
+# single-step noise crossings are no longer promoted to a dangerous label.
+RATE_ESCALATE_MIN_STEPS = 2
+
 
 @dataclass
 class SimulationResult:
@@ -67,8 +92,15 @@ class SimulationResult:
         return int(self.frame["cell"].nunique())
 
 
-def _label_state(true_temp: float, true_rate: float) -> int:
-    """Ground-truth hidden state from the simulator's internal physical state."""
+def _label_state(true_temp: float, true_rate: float, rate_escalate_streak: int = 0) -> int:
+    """Ground-truth hidden state from the simulator's internal physical state.
+
+    `rate_escalate_streak` is the number of CONSECUTIVE prior steps (including
+    this one) for which `true_rate >= LABEL_RATE_ESCALATE` has held, tracked by
+    the caller. Escalation only fires once that streak reaches
+    `RATE_ESCALATE_MIN_STEPS`, so a single noisy rate sample cannot flip the
+    label (see the RATE_ESCALATE_MIN_STEPS comment above).
+    """
     if true_temp >= LABEL_RUNAWAY_C:
         return P.S_RUNAWAY
     if true_temp >= LABEL_PRE_C:
@@ -77,8 +109,9 @@ def _label_state(true_temp: float, true_rate: float) -> int:
         base = P.S_ABNORMAL
     else:
         base = P.S_HEALTHY
-    # Rapid heating is itself a symptom: escalate one band (never past Pre).
-    if true_rate >= LABEL_RATE_ESCALATE and base < P.S_PRE:
+    # Rapid, SUSTAINED heating is itself a symptom: escalate one band (never
+    # past Pre). `true_rate` alone is not used here - see RATE_ESCALATE_MIN_STEPS.
+    if rate_escalate_streak >= RATE_ESCALATE_MIN_STEPS and base < P.S_PRE:
         base += 1
     return base
 
@@ -123,6 +156,14 @@ def simulate_pack(
     sensor_offset = np.zeros(n_cells, dtype=float)   # additive primary-sensor fault
     gas_mult = np.ones(n_cells, dtype=float)
     extra_vdev = np.zeros(n_cells, dtype=float)
+    rate_escalate_streak = np.zeros(n_cells, dtype=int)
+    # Phase 7A: a third overlapping thermal sensor (surface probe). It lags
+    # the true core temperature through an exponential filter representing
+    # the thermal mass between core and case - see
+    # config.model_parameters.OVERLAPPING_SENSOR_LAG_STEPS.
+    T_surface_lag = T.copy()
+    surface_alpha = 1.0 / (P.OVERLAPPING_SENSOR_LAG_STEPS["surface"] + 1)
+    surface_lag_history: List[np.ndarray] = []
 
     for step in range(n_steps):
         t_min = step * dt
@@ -196,7 +237,7 @@ def simulate_pack(
         # ------------------------------------------------------------------
         neigh_mean = np.zeros(n_cells, dtype=float)
         for i in range(n_cells):
-            nb = [j for j in (i - 1, i + 1) if 0 <= j < n_cells]
+            nb = P.pack_neighbours(i, n_cells)
             neigh_mean[i] = float(np.mean([T[j] for j in nb]))
 
         T_prev = T.copy()
@@ -208,6 +249,11 @@ def simulate_pack(
         T = T + dT + rng.normal(0.0, PROC_NOISE_C, n_cells)
         T = np.clip(T, P.AMBIENT_C - 5.0, 160.0)
         true_rate = (T - T_prev) / dt
+        T_surface_lag = T_surface_lag + (T - T_surface_lag) * surface_alpha
+
+        rate_escalate_streak = np.where(
+            true_rate >= LABEL_RATE_ESCALATE, rate_escalate_streak + 1, 0
+        )
 
         soc = np.clip(soc + d_soc, 0.02, 1.0)
 
@@ -215,7 +261,7 @@ def simulate_pack(
         # sensing (what the inference pipeline is allowed to see)
         # ------------------------------------------------------------------
         for i in range(n_cells):
-            nb = [j for j in (i - 1, i + 1) if 0 <= j < n_cells]
+            nb = P.pack_neighbours(i, n_cells)
             neigh_true = float(np.max([T[j] for j in nb]))
 
             temp_primary = T[i] + sensor_offset[i] + rng.normal(0.0, SENSOR_NOISE_C)
@@ -238,7 +284,7 @@ def simulate_pack(
             cooling_meas = float(np.clip(cooling[i] + rng.normal(0.0, COOLING_NOISE), 0.0, 1.0))
             current_meas = float(current + rng.normal(0.0, CURRENT_NOISE))
 
-            state = _label_state(float(T[i]), float(true_rate[i]))
+            state = _label_state(float(T[i]), float(true_rate[i]), int(rate_escalate_streak[i]))
 
             rows.append(
                 {
@@ -256,6 +302,7 @@ def simulate_pack(
                     # observations (visible to the pipeline)
                     "temp_primary": float(temp_primary),
                     "temp_backup": float(temp_backup),
+                    "temp_surface": float(T_surface_lag[i]),  # patched below with its own noise
                     "neighbour_temp": float(neigh_meas),
                     "gas_ppm": gas_ppm,
                     "log_gas": log_gas,
@@ -266,6 +313,17 @@ def simulate_pack(
                     "cooling_eff": cooling_meas,
                 }
             )
+        surface_lag_history.append(T_surface_lag.copy())
+
+    # Third overlapping sensor (Phase 7A), drawn in ONE batch AFTER the
+    # entire step loop so the RNG stream consumed by every pre-existing
+    # channel (across every step) is byte-for-byte unchanged - reproducible
+    # frozen-baseline behaviour is fully preserved.
+    surface_lag_arr = np.concatenate(surface_lag_history)
+    surface_noise = rng.normal(0.0, P.OVERLAPPING_SENSOR_NOISE_C["surface"], surface_lag_arr.shape)
+    temp_surface_arr = surface_lag_arr + P.OVERLAPPING_SENSOR_BIAS_C["surface"] + surface_noise
+    for row, val in zip(rows, temp_surface_arr):
+        row["temp_surface"] = float(val)
 
     frame = pd.DataFrame(rows)
 

@@ -8,7 +8,7 @@ Application entry point.  Run with:
 
 This module owns only the shell: page configuration, global styling, shared
 session-state initialisation and the persistent left navigation.  Each of the
-seven pages lives in `pages/` and reads its data from one immutable
+five pages lives in `pages/` and reads its data from one immutable
 `PageContext` snapshot produced by `state.session_manager`.
 
 Every probability shown anywhere in this application is produced by the models
@@ -25,7 +25,7 @@ import streamlit as st
 from dashboard.battery_twin import TWIN_CSS
 from dashboard.components import COMPONENTS_CSS
 from dashboard.network_graph import NETWORK_CSS
-from dashboard.navigation import render_brand, render_nav, render_status_footer
+from dashboard.navigation import render_brand, render_controls, render_nav, render_status_footer
 from dashboard.styles import CSS
 from state import session_manager as SM
 
@@ -68,6 +68,7 @@ def main() -> None:
 
     render_brand()
     render_nav(PAGES, nav.url_path)
+    render_controls(ctx)
     render_status_footer()
 
     nav.run()

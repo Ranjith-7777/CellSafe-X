@@ -9,11 +9,11 @@ and recommend argmin_a ExpectedLoss(a).  The posterior comes from the Bayesian
 filter, so the recommendation shifts continuously as evidence accumulates -
 there is no threshold ladder anywhere in this module.
 
-A separate, clearly-labelled "probabilistic intervention assessment" estimates
-how much each action is expected to reduce the near-term dangerous-state
-probability.  This is an assumed effectiveness model used for presentation only;
-it is NOT formal causal counterfactual inference and is never used to override
-the expected-loss ranking.
+Each `ActionEvaluation` also carries a "projected_dangerous_after" figure,
+which comes from a PHASE-3 MODEL-BASED / CONTROLLED-TRANSITION counterfactual
+forecast (see models/intervention.py), not from the old flat effectiveness
+table and not from formal causal (Pearlian do(X)) inference. It is presentation
+context only and is never used to override the expected-loss ranking below.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from typing import Dict, List, Sequence
 import numpy as np
 
 from config import model_parameters as P
+from models.intervention import forecast_under_intervention
 from models.risk_forecast import dangerous_probability, propagate
 
 
@@ -90,18 +91,18 @@ def recommend_action(
     evaluations: List[ActionEvaluation] = []
     for i, action in enumerate(P.ACTIONS):
         contributions = {P.STATES[s]: float(p[s] * L[i, s]) for s in range(P.N_STATES)}
-        eff = P.INTERVENTION_EFFECTIVENESS[action]
-        # One-step-ahead dangerous probability if we do nothing, scaled down by
-        # the assumed effectiveness of this action.
-        baseline_next = dangerous_probability(propagate(p, 1))
+        # One-step-ahead controlled-transition forecast (see
+        # models/intervention.py) replaces the old flat effectiveness table as
+        # the source of this figure.
+        cf = forecast_under_intervention(p, action, horizon_min=P.DT_MINUTES)
         evaluations.append(
             ActionEvaluation(
                 action=action,
                 expected_loss=float(losses[i]),
                 per_state_contribution=contributions,
                 cost_note=P.ACTION_COST_NOTES[action],
-                intervention_effectiveness=eff,
-                projected_dangerous_after=float(baseline_next * (1.0 - eff)),
+                intervention_effectiveness=cf.relative_risk_reduction,
+                projected_dangerous_after=cf.intervention_dangerous,
             )
         )
 

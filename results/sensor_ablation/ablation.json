@@ -1,0 +1,56 @@
+[
+  {
+    "configuration": "1_primary_only",
+    "sensors": "primary",
+    "accuracy": 0.19444444444444445,
+    "false_alarms": 82,
+    "missed_dangerous": 0,
+    "mean_entropy_nats": 0.2826554854992672,
+    "max_p_dangerous": 1.0000000000000002
+  },
+  {
+    "configuration": "2_primary_backup",
+    "sensors": "primary,backup",
+    "accuracy": 0.43333333333333335,
+    "false_alarms": 67,
+    "missed_dangerous": 0,
+    "mean_entropy_nats": 0.2268611209630798,
+    "max_p_dangerous": 0.9999999999999956
+  },
+  {
+    "configuration": "3_all_three_temp",
+    "sensors": "primary,surface,backup",
+    "accuracy": 0.4,
+    "false_alarms": 68,
+    "missed_dangerous": 0,
+    "mean_entropy_nats": 0.19511508676766343,
+    "max_p_dangerous": 0.9999999999999999
+  },
+  {
+    "configuration": "4_temp_family_plus_voltage",
+    "sensors": "primary,surface,backup+voltage_dev",
+    "accuracy": 0.42777777777777776,
+    "false_alarms": 64,
+    "missed_dangerous": 0,
+    "mean_entropy_nats": 0.17433994118165502,
+    "max_p_dangerous": 1.0
+  },
+  {
+    "configuration": "5_temp_family_plus_gas",
+    "sensors": "primary,surface,backup+log_gas",
+    "accuracy": 0.4444444444444444,
+    "false_alarms": 61,
+    "missed_dangerous": 0,
+    "mean_entropy_nats": 0.15815292508037285,
+    "max_p_dangerous": 0.9999999999999856
+  },
+  {
+    "configuration": "6_complete_supported_set",
+    "sensors": "primary,surface,backup+voltage_dev,log_gas,neighbour_c",
+    "accuracy": 0.46111111111111114,
+    "false_alarms": 56,
+    "missed_dangerous": 0,
+    "mean_entropy_nats": 0.12575233583391612,
+    "max_p_dangerous": 0.999999999999982
+  }
+]

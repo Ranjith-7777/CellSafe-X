@@ -1,0 +1,42 @@
+{
+  "data_source": "REAL - Warwick/Faraday Institution thermal-runaway dataset (DOI 10.17632/rgfhdhcd9k.1), NOT the synthetic simulator",
+  "track": "external_validation_only_not_merged_with_synthetic_metrics",
+  "experiments": [
+    {
+      "experiment_id": 0,
+      "n_steps": 96,
+      "max_p_dangerous": 1.0,
+      "max_p_dangerous_time_s": 80.0,
+      "temp_runaway_onset_s": 700.0,
+      "pressure_vent_onset_s": 310.0,
+      "event_marker_note": "Signal-derived proxies computed from this analysis' own resampled channels, NOT event timestamps extracted from the source paper (not accessible from this environment) - see PROVENANCE.md.",
+      "first_alarm_time_s": 60.0,
+      "warning_lead_time_s": 640.0,
+      "fraction_pre_event_flagged_dangerous": 0.9285714285714286
+    },
+    {
+      "experiment_id": 1,
+      "n_steps": 111,
+      "max_p_dangerous": 1.0,
+      "max_p_dangerous_time_s": 60.0,
+      "temp_runaway_onset_s": 730.0,
+      "pressure_vent_onset_s": 290.0,
+      "event_marker_note": "Signal-derived proxies computed from this analysis' own resampled channels, NOT event timestamps extracted from the source paper (not accessible from this environment) - see PROVENANCE.md.",
+      "first_alarm_time_s": 50.0,
+      "warning_lead_time_s": 680.0,
+      "fraction_pre_event_flagged_dangerous": 0.9452054794520548
+    },
+    {
+      "experiment_id": 2,
+      "n_steps": 131,
+      "max_p_dangerous": 1.0000000000000002,
+      "max_p_dangerous_time_s": 220.0,
+      "temp_runaway_onset_s": 720.0,
+      "pressure_vent_onset_s": 240.0,
+      "event_marker_note": "Signal-derived proxies computed from this analysis' own resampled channels, NOT event timestamps extracted from the source paper (not accessible from this environment) - see PROVENANCE.md.",
+      "first_alarm_time_s": 20.0,
+      "warning_lead_time_s": 700.0,
+      "fraction_pre_event_flagged_dangerous": 0.9861111111111112
+    }
+  ]
+}
